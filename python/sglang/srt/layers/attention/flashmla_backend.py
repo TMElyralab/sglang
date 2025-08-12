@@ -4,12 +4,22 @@ from __future__ import annotations
 Support attention backend for FlashMLA.
 """
 
+import os
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import torch
 import triton
-from flash_mla import flash_mla_with_kvcache, get_mla_metadata
+
+from sglang.srt.utils import get_bool_env_var
+if get_bool_env_var("SGLANG_USE_KV_FP8_FLASHMLA"):
+    from sgl_kernel.flashmla_attn import flash_mla_with_kvcache, get_mla_metadata
+else:
+    try:
+        from flashmla import flash_mla_with_kvcache, get_mla_metadata
+    except ImportError:
+        from sgl_kernel.flashmla_attn import flash_mla_with_kvcache, get_mla_metadata
 
 from sglang.srt.layers.attention.flashinfer_mla_backend import FlashInferMLAAttnBackend
 from sglang.srt.layers.attention.utils import create_flashmla_kv_indices_triton
@@ -367,7 +377,7 @@ class FlashMLABackend(FlashInferMLAAttnBackend):
                 descale_k=torch.ones((1), dtype=torch.float32, device=reshape_q.device),
             )
 
-            return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+            return o.to(q.dtype).view(-1, layer.tp_q_head_num * layer.v_head_dim)
         else:
             # todo: need check all causal True or False?
             o, _ = flash_mla_with_kvcache(
@@ -382,7 +392,7 @@ class FlashMLABackend(FlashInferMLAAttnBackend):
                 causal=True,
             )
 
-            return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+            return o.to(q.dtype).view(-1, layer.tp_q_head_num * layer.v_head_dim)
 
     def forward_extend(
         self,
@@ -443,7 +453,7 @@ class FlashMLABackend(FlashInferMLAAttnBackend):
                     softmax_scale=layer.scaling,
                     causal=True,
                 )
-            return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+            return o.to(q.dtype).view(-1, layer.tp_q_head_num * layer.v_head_dim)
 
 
 # TODO: multi step kv indices optimization
